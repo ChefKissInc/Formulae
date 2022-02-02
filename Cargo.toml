@@ -1,0 +1,18 @@
+[package]
+name = "formulae"
+description = "Firework configuration format crate"
+repository = "https://github.com/Firework-OS/VESA"
+keywords = ["firework", "config"]
+categories = ["no-std"]
+version = "0.1.0"
+authors = ["VisualDevelopment"]
+edition = "2021"
+license-file = "LICENSE"
+
+[profile.dev]
+lto = "thin"
+
+[profile.release]
+lto = true
+
+[dependencies]
