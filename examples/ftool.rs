@@ -36,15 +36,13 @@ fn main() {
     match &args.command {
         Commands::New { filename } => {
             let mut data = formulae::Root::default();
-            data.nodes
-                .insert("Cool".to_string(), formulae::Node::Bool(true));
-            data.nodes
-                .insert("somenumber".to_string(), formulae::Node::Int64(0xABCDEF));
-            data.nodes.insert(
+            data.insert("Cool".to_string(), formulae::Node::Bool(true));
+            data.insert("somenumber".to_string(), formulae::Node::Int64(0xABCDEF));
+            data.insert(
                 "A string".to_string(),
                 formulae::Node::String("hello world".to_string()),
             );
-            data.nodes.insert(
+            data.insert(
                 "array".to_string(),
                 formulae::Node::Array(vec![
                     formulae::Node::String("hello world".to_string()),
@@ -57,7 +55,7 @@ fn main() {
         }
         Commands::Read { filename } => {
             let contents = std::fs::read(filename).unwrap();
-            println!("{:#X?}", formulae::Root::from_bytes(&contents));
+            println!("{:#X?}", formulae::Root::parse(&contents));
         }
     }
 }

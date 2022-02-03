@@ -15,9 +15,10 @@ use alloc::{
 };
 
 use hashbrown::HashMap;
-use raw::*;
 
-pub mod raw;
+pub mod node_types;
+
+pub const FORMULAE_MAGIC: &str = "formulae";
 
 #[derive(Debug, PartialEq)]
 pub enum Node {
@@ -29,107 +30,119 @@ pub enum Node {
     Dictionary(HashMap<String, Node>),
 }
 
+fn read_bytes<const N: usize>(input: &[u8]) -> Option<([u8; N], &[u8])> {
+    if input.len() < N {
+        return None;
+    }
+
+    let (head, rest) = input.split_at(N);
+
+    Some((head.try_into().unwrap(), rest))
+}
+
+fn read_key(input: &[u8]) -> Option<(String, &[u8])> {
+    let (len, input) = read_bytes(input)?;
+    let len = u16::from_le_bytes(len) as usize;
+
+    if input.len() < len {
+        return None;
+    }
+
+    let (head, input) = input.split_at(len);
+
+    Some((core::str::from_utf8(head).ok()?.to_string(), input))
+}
+
+fn read_string(input: &[u8]) -> Option<(String, &[u8])> {
+    let (len, input) = read_bytes(input)?;
+    let len = u64::from_le_bytes(len) as usize;
+
+    if input.len() < len {
+        return None;
+    }
+
+    let (head, input) = input.split_at(len);
+
+    Some((core::str::from_utf8(head).ok()?.to_string(), input))
+}
+
 impl Node {
-    pub fn to_node_type(&self) -> NodeType {
+    pub fn to_node_type(&self) -> u8 {
         match self {
-            Self::Bool(_) => NodeType::Bool,
-            Self::Int32(_) => NodeType::Int32,
-            Self::Int64(_) => NodeType::Int64,
-            Self::String(_) => NodeType::String,
-            Self::Array(_) => NodeType::Array,
-            Self::Dictionary(_) => NodeType::Dictionary,
+            Self::Bool(_) => node_types::BOOL,
+            Self::Int32(_) => node_types::INT32,
+            Self::Int64(_) => node_types::INT64,
+            Self::String(_) => node_types::STR,
+            Self::Array(_) => node_types::ARRAY,
+            Self::Dictionary(_) => node_types::DICT,
         }
     }
 
-    pub fn from_bytes(
-        node_type: &NodeType,
-        next: &mut *const u8,
-        data_end: *const u8,
-    ) -> Result<Option<Self>, String> {
+    pub fn parse(node_type: u8, mut input: &[u8]) -> Result<Option<(Self, &[u8])>, String> {
         match node_type {
-            NodeType::Bool => unsafe {
-                let node = &*(*next as *const BoolNode);
-                *next = next.add(1);
-
-                if *next >= data_end {
-                    Err("Data unexpectedly ended before parsing Bool node".to_string())
+            node_types::BOOL => {
+                if let Some(([value], input)) = read_bytes(input) {
+                    if value > 1 {
+                        Err(format!("Invalid value for Bool node: {}", value))
+                    } else {
+                        Ok(Some((Self::Bool(value == 1), input)))
+                    }
                 } else {
-                    Ok(Some(Self::Bool(node.value)))
+                    Err("Data unexpectedly ended while parsing Bool node".to_string())
                 }
-            },
-            NodeType::Int32 => unsafe {
-                let node = &*(*next as *const Int32Node);
-                *next = next.add(4);
-
-                if *next >= data_end {
-                    Err("Data unexpectedly ended before parsing Int32 node".to_string())
+            }
+            node_types::INT32 => {
+                if let Some((bytes, input)) = read_bytes(input) {
+                    Ok(Some((Self::Int32(u32::from_le_bytes(bytes)), input)))
                 } else {
-                    Ok(Some(Self::Int32(node.value)))
+                    Err("Data unexpectedly ended while parsing Int32 node".to_string())
                 }
-            },
-            NodeType::Int64 => unsafe {
-                let node = &*(*next as *const Int64Node);
-                *next = next.add(8);
-
-                if *next >= data_end {
-                    Err("Data unexpectedly ended before parsing Int64 node".to_string())
+            }
+            node_types::INT64 => {
+                if let Some((bytes, input)) = read_bytes(input) {
+                    Ok(Some((Self::Int64(u64::from_le_bytes(bytes)), input)))
                 } else {
-                    Ok(Some(Self::Int64(node.value)))
+                    Err("Data unexpectedly ended while parsing Int64 node".to_string())
                 }
-            },
-            NodeType::String => unsafe {
-                let node = &*(*next as *const StringNode);
-                *next = next.add(8);
-
-                if *next > data_end {
-                    Err("Data unexpectedly ended before parsing String node".to_string())
-                } else if next.add(node.len as usize) >= data_end {
-                    Err("Data unexpectedly ended before parsing String node contents".to_string())
+            }
+            node_types::STR => {
+                if let Some((s, input)) = read_string(input) {
+                    Ok(Some((Self::String(s), input)))
                 } else {
-                    let value = String::from_utf8_unchecked(
-                        core::slice::from_raw_parts(*next, node.len as usize).to_vec(),
-                    );
-                    *next = next.add(node.len as usize);
-
-                    Ok(Some(Self::String(value)))
+                    Err("Data unexpectedly ended while parsing String node".to_string())
                 }
-            },
-            NodeType::Array => unsafe {
-                if *next >= data_end {
-                    Err("Data unexpectedly ended before parsing Array node".to_string())
-                } else {
-                    let mut nodes = Vec::new();
-                    loop {
-                        let node_type = &*(*next as *const NodeType);
-                        *next = next.add(1);
+            }
+            node_types::ARRAY => {
+                let mut nodes = Vec::new();
 
-                        if let Some(node) = Self::from_bytes(node_type, next, data_end)? {
+                loop {
+                    if let Some(([node_type], rest)) = read_bytes(input) {
+                        input = rest;
+
+                        if let Some((node, rest)) = Self::parse(node_type, input)? {
+                            input = rest;
                             nodes.push(node);
                         } else {
-                            break Ok(Some(Self::Array(nodes)));
+                            break Ok(Some((Self::Array(nodes), input)));
                         }
+                    } else {
+                        break Err("Data unexpectedly ended while parsing Array node".to_string());
                     }
                 }
-            },
-            NodeType::End => Ok(None),
-            _ => Err(format!("Unimplemented Node type: {:#X?}", node_type)),
+            }
+            node_types::END => Ok(None),
+            _ => Err(format!("Unknown Node type: {}", node_type)),
         }
     }
 
     pub fn into_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         match self {
-            Node::Bool(value) => {
-                bytes.extend_from_slice(unsafe { BoolNode::new(*value).to_bytes() })
-            }
-            Node::Int32(value) => {
-                bytes.extend_from_slice(unsafe { Int32Node::new(*value).to_bytes() })
-            }
-            Node::Int64(value) => {
-                bytes.extend_from_slice(unsafe { Int64Node::new(*value).to_bytes() })
-            }
+            Node::Bool(value) => bytes.extend_from_slice(&(*value as u8).to_le_bytes()),
+            Node::Int32(value) => bytes.extend_from_slice(&value.to_le_bytes()),
+            Node::Int64(value) => bytes.extend_from_slice(&value.to_le_bytes()),
             Node::String(value) => {
-                bytes.extend_from_slice(unsafe { StringNode::new(value.len() as u64).to_bytes() });
+                bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(value.as_bytes())
             }
             Node::Array(nodes) => {
@@ -137,6 +150,7 @@ impl Node {
                     bytes.push(node.to_node_type() as u8);
                     bytes.extend_from_slice(&node.into_bytes())
                 }
+                bytes.push(node_types::END)
             }
             _ => unimplemented!(),
         }
@@ -146,47 +160,54 @@ impl Node {
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub struct Root {
-    pub nodes: HashMap<String, Node>,
+pub struct Root(HashMap<String, Node>);
+
+impl core::ops::Deref for Root {
+    type Target = HashMap<String, Node>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl core::ops::DerefMut for Root {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl Root {
-    pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
-        if data.len() < 2 {
+    pub fn parse(mut input: &[u8]) -> Result<Self, String> {
+        if input.len() < 2 {
             Err("Data too small".to_string())
         } else {
-            let data_end = unsafe { data.as_ptr().add(data.len()) };
-            let mut next = data.as_ptr();
             let mut nodes = HashMap::new();
 
-            let magic = unsafe { core::slice::from_raw_parts(next, 8) };
-            next = unsafe { next.add(8) };
+            let (magic, rest) = read_bytes::<8>(input).unwrap();
+            input = rest;
 
-            if magic == FORMULAE_MAGIC {
-                loop {
-                    if next >= data_end {
-                        break Err("Missing end node".to_string());
-                    }
+            if core::str::from_utf8(&magic).map_err(|e| e.to_string())? == FORMULAE_MAGIC {
+                while !input.is_empty() {
+                    if let Some(([node_type], rest)) = read_bytes(input) {
+                        input = rest;
+                        if let Some((key, rest)) = read_key(input) {
+                            input = rest;
 
-                    let header = unsafe { &*(next as *const NodeHeader) };
-
-                    next = unsafe { next.add(3) };
-
-                    let key = unsafe {
-                        String::from_utf8_unchecked(
-                            core::slice::from_raw_parts(next, header.key_len as usize).to_vec(),
-                        )
-                    };
-                    next = unsafe { next.add(header.key_len as usize) };
-
-                    if let Some(node) = Node::from_bytes(&header.node_type, &mut next, data_end)? {
-                        nodes
-                            .try_insert(key, node)
-                            .map_err(|_| "Tried to insert already existing value".to_string())?;
+                            if let Some((node, rest)) = Node::parse(node_type, input)? {
+                                input = rest;
+                                nodes.try_insert(key, node).map_err(|_| {
+                                    "Tried to insert already existing value".to_string()
+                                })?;
+                            } else {
+                                return Ok(Self(nodes));
+                            }
+                        }
                     } else {
-                        break Ok(Self { nodes });
+                        return Err("Data unexpectedly ended".to_string());
                     }
                 }
+
+                Err("Missing End node".to_string())
             } else {
                 Err("Invalid magic".to_string())
             }
@@ -195,17 +216,17 @@ impl Root {
 
     pub fn into_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend_from_slice(&FORMULAE_MAGIC);
+        bytes.extend_from_slice(FORMULAE_MAGIC.as_bytes());
 
-        for (key, node) in &self.nodes {
-            bytes.extend_from_slice(unsafe {
-                NodeHeader::new(node.to_node_type(), key.len().try_into().unwrap()).to_bytes()
-            });
+        for (key, node) in &self.0 {
+            bytes.push(node.to_node_type());
+            bytes.extend_from_slice(&(key.len() as u16).to_le_bytes());
             bytes.extend_from_slice(key.as_bytes());
             bytes.extend(node.into_bytes())
         }
 
-        bytes.extend(unsafe { NodeHeader::new(NodeType::End, 0).to_bytes() });
+        bytes.push(node_types::END);
+        bytes.extend_from_slice(&0u16.to_le_bytes());
 
         bytes
     }
