@@ -8,7 +8,11 @@
 
 extern crate alloc;
 
-use alloc::{string::{String, ToString}, vec::Vec, format};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use hashbrown::HashMap;
 use raw::*;
