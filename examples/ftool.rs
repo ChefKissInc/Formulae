@@ -44,6 +44,13 @@ fn main() {
                 "A string".to_string(),
                 formulae::Node::String("hello world".to_string()),
             );
+            data.nodes.insert(
+                "array".to_string(),
+                formulae::Node::Array(vec![
+                    formulae::Node::String("hello world".to_string()),
+                    formulae::Node::Int64(0xABCDEF),
+                ]),
+            );
             BufWriter::new(std::fs::File::create(filename).unwrap())
                 .write(&data.into_bytes())
                 .unwrap();

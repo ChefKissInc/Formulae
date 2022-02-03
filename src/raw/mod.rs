@@ -5,58 +5,97 @@
 
 #![allow(clippy::return_self_not_must_use, clippy::unnecessary_cast)]
 
-use modular_bitfield::prelude::*;
-
 pub const FORMULAE_MAGIC: [u8; 8] = [b'f', b'o', b'r', b'm', b'u', b'l', b'a', b'e'];
 
-#[derive(Debug, BitfieldSpecifier, PartialEq)]
-#[repr(u8)]
-#[bits = 4]
-pub enum NodeType {
-    Bool = 0,
-    Int32 = 1,
-    Int64 = 2,
-    String = 3,
-    Dictionary = 4,
-    End = 0b1111,
+pub trait AnyToBytes: Sized {
+    /// # Safety
+    /// The callee must ensure safe operation
+    unsafe fn to_bytes(&self) -> &[u8] {
+        core::slice::from_raw_parts(self as *const _ as *const u8, core::mem::size_of::<Self>())
+    }
 }
 
-#[bitfield(bits = 24)]
-#[derive(Debug, PartialEq)]
-#[repr(C)]
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(u8)]
+pub enum NodeType {
+    Bool = 0,
+    Int32,
+    Int64,
+    String,
+    Array,
+    Dictionary,
+    End = 0xFF,
+}
+
+impl AnyToBytes for NodeType {}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(C, packed)]
 pub struct NodeHeader {
     pub node_type: NodeType,
-    #[skip]
-    __: B4,
     pub key_len: u16,
 }
 
-#[bitfield(bits = 8)]
-#[derive(Debug, PartialEq)]
-#[repr(C)]
-pub struct BoolNode {
-    pub value: bool,
-    #[skip]
-    __: B7,
+impl AnyToBytes for NodeHeader {}
+
+impl NodeHeader {
+    pub fn new(node_type: NodeType, key_len: u16) -> Self {
+        Self { node_type, key_len }
+    }
 }
 
-#[bitfield(bits = 32)]
-#[derive(Debug, PartialEq)]
-#[repr(C)]
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(C, packed)]
+pub struct BoolNode {
+    pub value: bool,
+}
+
+impl AnyToBytes for BoolNode {}
+
+impl BoolNode {
+    pub fn new(value: bool) -> Self {
+        Self { value }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(C, packed)]
 pub struct Int32Node {
     pub value: u32,
 }
 
-#[bitfield(bits = 64)]
-#[derive(Debug, PartialEq)]
-#[repr(C)]
+impl AnyToBytes for Int32Node {}
+
+impl Int32Node {
+    pub fn new(value: u32) -> Self {
+        Self { value }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(C, packed)]
 pub struct Int64Node {
     pub value: u64,
 }
 
-#[bitfield(bits = 64)]
-#[derive(Debug, PartialEq)]
-#[repr(C)]
+impl AnyToBytes for Int64Node {}
+
+impl Int64Node {
+    pub fn new(value: u64) -> Self {
+        Self { value }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(C, packed)]
 pub struct StringNode {
-    pub length: u64,
+    pub len: u64,
+}
+
+impl AnyToBytes for StringNode {}
+
+impl StringNode {
+    pub fn new(len: u64) -> Self {
+        Self { len }
+    }
 }
