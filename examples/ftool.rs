@@ -8,6 +8,7 @@
 use std::io::{BufWriter, Write};
 
 use clap::{AppSettings, Parser, Subcommand};
+use hashbrown::HashMap;
 
 #[derive(Parser)]
 #[clap(name = "ftool")]
@@ -48,6 +49,14 @@ fn main() {
                     formulae::Node::String("hello world".to_string()),
                     formulae::Node::Int64(0xABCDEF),
                 ]),
+            );
+            let mut map = HashMap::new();
+            map.insert("macos".to_string(), formulae::Node::Bool(true));
+            map.insert("me".to_string(), formulae::Node::Bool(true));
+            map.insert("microsoft".to_string(), formulae::Node::Bool(false));
+            data.insert(
+                "cool_things_def".to_string(),
+                formulae::Node::Dictionary(map),
             );
             BufWriter::new(std::fs::File::create(filename).unwrap())
                 .write(&data.into_bytes())

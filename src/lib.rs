@@ -130,6 +130,32 @@ impl Node {
                     }
                 }
             }
+            node_types::DICT => {
+                let mut map = HashMap::new();
+
+                loop {
+                    if let Some(([node_type], rest)) = read_bytes(input) {
+                        input = rest;
+                        if let Some((key, rest)) = read_key(input) {
+                            input = rest;
+                            if let Some((node, rest)) = Node::parse(node_type, input)? {
+                                input = rest;
+                                map.insert(key, node);
+                            } else {
+                                break Ok(Some((Self::Dictionary(map), input)));
+                            }
+                        } else {
+                            break Err("Data unexpectedly ended while parsing Dictionary node \
+                                       contents"
+                                .to_string());
+                        }
+                    } else {
+                        break Err(
+                            "Data unexpectedly ended while parsing Dictionary node".to_string()
+                        );
+                    }
+                }
+            }
             node_types::END => Ok(None),
             _ => Err(format!("Unknown Node type: {}", node_type)),
         }
@@ -150,9 +176,19 @@ impl Node {
                     bytes.push(node.to_node_type() as u8);
                     bytes.extend_from_slice(&node.into_bytes())
                 }
-                bytes.push(node_types::END)
+                bytes.push(node_types::END);
+                bytes.extend_from_slice(&0u16.to_le_bytes());
             }
-            _ => unimplemented!(),
+            Node::Dictionary(map) => {
+                for (key, node) in map {
+                    bytes.push(node.to_node_type());
+                    bytes.extend_from_slice(&(key.len() as u16).to_le_bytes());
+                    bytes.extend_from_slice(key.as_bytes());
+                    bytes.extend_from_slice(&node.into_bytes())
+                }
+                bytes.push(node_types::END);
+                bytes.extend_from_slice(&0u16.to_le_bytes());
+            }
         }
 
         bytes
@@ -192,7 +228,6 @@ impl Root {
                         input = rest;
                         if let Some((key, rest)) = read_key(input) {
                             input = rest;
-
                             if let Some((node, rest)) = Node::parse(node_type, input)? {
                                 input = rest;
                                 nodes.try_insert(key, node).map_err(|_| {
@@ -222,7 +257,7 @@ impl Root {
             bytes.push(node.to_node_type());
             bytes.extend_from_slice(&(key.len() as u16).to_le_bytes());
             bytes.extend_from_slice(key.as_bytes());
-            bytes.extend(node.into_bytes())
+            bytes.extend_from_slice(&node.into_bytes())
         }
 
         bytes.push(node_types::END);
