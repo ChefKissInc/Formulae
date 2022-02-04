@@ -25,9 +25,19 @@ enum Commands {
         #[clap(required = true, parse(from_os_str))]
         filename: std::path::PathBuf,
     },
+    Set {
+        #[clap(required = true, parse(from_os_str))]
+        filename: std::path::PathBuf,
+        #[clap(required = true)]
+        path: String,
+        #[clap(required = true)]
+        value: String,
+    },
     Read {
         #[clap(required = true, parse(from_os_str))]
         filename: std::path::PathBuf,
+        #[clap(required = false)]
+        path: Option<String>,
     },
 }
 
@@ -36,7 +46,7 @@ fn main() {
 
     match &args.command {
         Commands::New { filename } => {
-            let mut data = formulae::Root::default();
+            let mut data = HashMap::new();
             data.insert("Cool".to_string(), formulae::Node::Bool(true));
             data.insert("somenumber".to_string(), formulae::Node::Int64(0xABCDEF));
             data.insert(
@@ -55,16 +65,50 @@ fn main() {
             map.insert("me".to_string(), formulae::Node::Bool(true));
             map.insert("microsoft".to_string(), formulae::Node::Bool(false));
             data.insert(
-                "cool_things_def".to_string(),
+                "is_cool".to_string(),
                 formulae::Node::Dictionary(map),
             );
             BufWriter::new(std::fs::File::create(filename).unwrap())
-                .write(&data.into_bytes())
+                .write(&formulae::Node::Root(data).into_bytes())
                 .unwrap();
         }
-        Commands::Read { filename } => {
+        Commands::Set {
+            filename: _,
+            path: _,
+            value: _,
+        } => {
+            unimplemented!()
+        }
+        Commands::Read { filename, path } => {
             let contents = std::fs::read(filename).unwrap();
-            println!("{:#X?}", formulae::Root::parse(&contents));
+            let contents = formulae::Node::parse_root(&contents).unwrap();
+            if let Some(path) = path {
+                let mut node = Some(&contents);
+                for node_path in path.split(".") {
+                    node = match node {
+                        Some(formulae::Node::Root(map) | formulae::Node::Dictionary(map)) => {
+                            map.get(node_path)
+                        }
+                        Some(formulae::Node::Array(nodes)) => {
+                            nodes.get(node_path.parse::<usize>().unwrap())
+                        }
+                        None => panic!("Path to node not found"),
+                        _ => {
+                            panic!(
+                                "Node of type {:#X?} cannot be indexed",
+                                node.unwrap().to_node_type()
+                            )
+                        }
+                    };
+                }
+                if let Some(node) = node {
+                    println!("{:#X?}", node);
+                } else {
+                    panic!("Path to node not found")
+                }
+            } else {
+                println!("{:#X?}", contents);
+            }
         }
     }
 }

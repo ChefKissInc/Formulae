@@ -22,6 +22,7 @@ pub const FORMULAE_MAGIC: &str = "formulae";
 
 #[derive(Debug, PartialEq)]
 pub enum Node {
+    Root(HashMap<String, Node>),
     Bool(bool),
     Int32(u32),
     Int64(u64),
@@ -75,6 +76,7 @@ impl Node {
             Self::String(_) => node_types::STR,
             Self::Array(_) => node_types::ARRAY,
             Self::Dictionary(_) => node_types::DICT,
+            _ => unreachable!(),
         }
     }
 
@@ -161,9 +163,58 @@ impl Node {
         }
     }
 
+    pub fn parse_root(mut input: &[u8]) -> Result<Self, String> {
+        if input.len() < 2 {
+            Err("Data too small".to_string())
+        } else {
+            let mut nodes = HashMap::new();
+
+            let (magic, rest) = read_bytes::<8>(input).unwrap();
+            input = rest;
+
+            if core::str::from_utf8(&magic).map_err(|e| e.to_string())? == FORMULAE_MAGIC {
+                while !input.is_empty() {
+                    if let Some(([node_type], rest)) = read_bytes(input) {
+                        input = rest;
+                        if let Some((key, rest)) = read_key(input) {
+                            input = rest;
+                            if let Some((node, rest)) = Node::parse(node_type, input)? {
+                                input = rest;
+                                nodes.try_insert(key, node).map_err(|_| {
+                                    "Tried to insert already existing value".to_string()
+                                })?;
+                            } else {
+                                return Ok(Self::Root(nodes));
+                            }
+                        }
+                    } else {
+                        return Err("Data unexpectedly ended".to_string());
+                    }
+                }
+
+                Err("Missing End node".to_string())
+            } else {
+                Err("Invalid magic".to_string())
+            }
+        }
+    }
+
     pub fn into_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         match self {
+            Node::Root(map) => {
+                bytes.extend_from_slice(FORMULAE_MAGIC.as_bytes());
+
+                for (key, node) in map {
+                    bytes.push(node.to_node_type());
+                    bytes.extend_from_slice(&(key.len() as u16).to_le_bytes());
+                    bytes.extend_from_slice(key.as_bytes());
+                    bytes.extend_from_slice(&node.into_bytes())
+                }
+
+                bytes.push(node_types::END);
+                bytes.extend_from_slice(&0u16.to_le_bytes());
+            }
             Node::Bool(value) => bytes.extend_from_slice(&(*value as u8).to_le_bytes()),
             Node::Int32(value) => bytes.extend_from_slice(&value.to_le_bytes()),
             Node::Int64(value) => bytes.extend_from_slice(&value.to_le_bytes()),
@@ -190,78 +241,6 @@ impl Node {
                 bytes.extend_from_slice(&0u16.to_le_bytes());
             }
         }
-
-        bytes
-    }
-}
-
-#[derive(Debug, Default, PartialEq)]
-pub struct Root(HashMap<String, Node>);
-
-impl core::ops::Deref for Root {
-    type Target = HashMap<String, Node>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl core::ops::DerefMut for Root {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl Root {
-    pub fn parse(mut input: &[u8]) -> Result<Self, String> {
-        if input.len() < 2 {
-            Err("Data too small".to_string())
-        } else {
-            let mut nodes = HashMap::new();
-
-            let (magic, rest) = read_bytes::<8>(input).unwrap();
-            input = rest;
-
-            if core::str::from_utf8(&magic).map_err(|e| e.to_string())? == FORMULAE_MAGIC {
-                while !input.is_empty() {
-                    if let Some(([node_type], rest)) = read_bytes(input) {
-                        input = rest;
-                        if let Some((key, rest)) = read_key(input) {
-                            input = rest;
-                            if let Some((node, rest)) = Node::parse(node_type, input)? {
-                                input = rest;
-                                nodes.try_insert(key, node).map_err(|_| {
-                                    "Tried to insert already existing value".to_string()
-                                })?;
-                            } else {
-                                return Ok(Self(nodes));
-                            }
-                        }
-                    } else {
-                        return Err("Data unexpectedly ended".to_string());
-                    }
-                }
-
-                Err("Missing End node".to_string())
-            } else {
-                Err("Invalid magic".to_string())
-            }
-        }
-    }
-
-    pub fn into_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(FORMULAE_MAGIC.as_bytes());
-
-        for (key, node) in &self.0 {
-            bytes.push(node.to_node_type());
-            bytes.extend_from_slice(&(key.len() as u16).to_le_bytes());
-            bytes.extend_from_slice(key.as_bytes());
-            bytes.extend_from_slice(&node.into_bytes())
-        }
-
-        bytes.push(node_types::END);
-        bytes.extend_from_slice(&0u16.to_le_bytes());
 
         bytes
     }
