@@ -64,10 +64,7 @@ fn main() {
             map.insert("macos".to_string(), formulae::Node::Bool(true));
             map.insert("me".to_string(), formulae::Node::Bool(true));
             map.insert("microsoft".to_string(), formulae::Node::Bool(false));
-            data.insert(
-                "is_cool".to_string(),
-                formulae::Node::Dictionary(map),
-            );
+            data.insert("is_cool".to_string(), formulae::Node::Dictionary(map));
             BufWriter::new(std::fs::File::create(filename).unwrap())
                 .write(&formulae::Node::Root(data).into_bytes())
                 .unwrap();
