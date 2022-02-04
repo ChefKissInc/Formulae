@@ -27,7 +27,6 @@ pub enum Node {
     Int32(u32),
     Int64(u64),
     String(String),
-    Array(Vec<Node>),
     Dictionary(HashMap<String, Node>),
 }
 
@@ -74,7 +73,6 @@ impl Node {
             Self::Int32(_) => node_types::INT32,
             Self::Int64(_) => node_types::INT64,
             Self::String(_) => node_types::STR,
-            Self::Array(_) => node_types::ARRAY,
             Self::Dictionary(_) => node_types::DICT,
             _ => unreachable!(),
         }
@@ -112,24 +110,6 @@ impl Node {
                     Ok(Some((Self::String(s), input)))
                 } else {
                     Err("Data unexpectedly ended while parsing String node".to_string())
-                }
-            }
-            node_types::ARRAY => {
-                let mut nodes = Vec::new();
-
-                loop {
-                    if let Some(([node_type], rest)) = read_bytes(input) {
-                        input = rest;
-
-                        if let Some((node, rest)) = Self::parse(node_type, input)? {
-                            input = rest;
-                            nodes.push(node);
-                        } else {
-                            break Ok(Some((Self::Array(nodes), input)));
-                        }
-                    } else {
-                        break Err("Data unexpectedly ended while parsing Array node".to_string());
-                    }
                 }
             }
             node_types::DICT => {
@@ -221,14 +201,6 @@ impl Node {
             Node::String(value) => {
                 bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(value.as_bytes())
-            }
-            Node::Array(nodes) => {
-                for node in nodes {
-                    bytes.push(node.to_node_type() as u8);
-                    bytes.extend_from_slice(&node.into_bytes())
-                }
-                bytes.push(node_types::END);
-                bytes.extend_from_slice(&0u16.to_le_bytes());
             }
             Node::Dictionary(map) => {
                 for (key, node) in map {
