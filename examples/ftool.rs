@@ -45,20 +45,53 @@ enum Commands {
         #[clap(required = true)]
         value: String,
     },
+    #[clap(setting(AppSettings::ArgRequiredElseHelp))]
+    Rename {
+        #[clap(required = true)]
+        path: String,
+        #[clap(required = true)]
+        name: String,
+    },
     Read {
         #[clap(required = false)]
         path: Option<String>,
     },
 }
 
+fn split_path(mut path: &str) -> Vec<String> {
+    let mut buf = vec![];
+    let mut escaped = false;
+
+    'outer: loop {
+        let mut s = String::new();
+        for (n, c) in path.char_indices() {
+            match c {
+                _ if escaped => {
+                    s.push(c);
+                    escaped = false;
+                }
+                '\\' => escaped = true,
+                '.' => {
+                    buf.push(s);
+                    path = &path[n + 1..];
+                    continue 'outer;
+                }
+                _ => s.push(c),
+            }
+        }
+        buf.push(s);
+        break buf;
+    }
+}
+
 fn traverse_path<'a>(
     path: &'a str,
     mut node: &'a mut formulae::Node,
 ) -> Result<&'a mut formulae::Node, String> {
-    for node_path in path.split(".") {
+    for node_path in split_path(path) {
         node = match node {
             formulae::Node::Root(map) | formulae::Node::Dictionary(map) => {
-                map.get_mut(node_path).map_or_else(
+                map.get_mut(&node_path).map_or_else(
                     || Err(format!("Path to node '{}' missing", node_path)),
                     |v| Ok(v),
                 )?
@@ -205,6 +238,35 @@ fn main() {
                 formulae::Node::String(val) => *val = value.clone(),
             }
             println!("After: {:#X?}", node);
+
+            BufWriter::new(std::fs::File::create(&args.filename).unwrap())
+                .write(&contents.into_bytes())
+                .unwrap();
+        }
+        Commands::Rename { path, name } => {
+            let contents = std::fs::read(&args.filename).unwrap();
+            let mut contents = formulae::Node::parse_root(&contents).unwrap();
+            let mut parts = split_path(path);
+            let old_name = parts.pop().unwrap();
+            let path = parts.join(".");
+            let parent = if path.is_empty() {
+                &mut contents
+            } else {
+                match traverse_path(&path, &mut contents) {
+                    Ok(v) => v,
+                    Err(e) => app.error(ErrorKind::ArgumentNotFound, e).exit(),
+                }
+            };
+
+            println!("Before: {:#X?}", parent);
+            match parent {
+                formulae::Node::Root(map) | formulae::Node::Dictionary(map) => {
+                    let old = map.remove(&old_name.to_string()).unwrap();
+                    map.insert(name.clone(), old);
+                }
+                _ => unreachable!(),
+            }
+            println!("After: {:#X?}", parent);
 
             BufWriter::new(std::fs::File::create(&args.filename).unwrap())
                 .write(&contents.into_bytes())
