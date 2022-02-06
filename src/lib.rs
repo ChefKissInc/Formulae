@@ -28,6 +28,7 @@ pub enum Node {
     Int64(u64),
     String(String),
     Dictionary(HashMap<String, Node>),
+    Array(Vec<Node>),
 }
 
 fn read_bytes<const N: usize>(input: &[u8]) -> Option<([u8; N], &[u8])> {
@@ -74,6 +75,7 @@ impl Node {
             Self::Int64(_) => node_types::INT64,
             Self::String(_) => node_types::STR,
             Self::Dictionary(_) => node_types::DICT,
+            Self::Array(_) => node_types::ARRAY,
             _ => unreachable!(),
         }
     }
@@ -135,6 +137,24 @@ impl Node {
                         break Err(
                             "Data unexpectedly ended while parsing Dictionary node".to_string()
                         );
+                    }
+                }
+            }
+            node_types::ARRAY => {
+                let mut nodes = Vec::new();
+
+                loop {
+                    if let Some(([node_type], rest)) = read_bytes(input) {
+                        input = rest;
+
+                        if let Some((node, rest)) = Self::parse(node_type, input)? {
+                            input = rest;
+                            nodes.push(node);
+                        } else {
+                            break Ok(Some((Self::Array(nodes), input)));
+                        }
+                    } else {
+                        break Err("Data unexpectedly ended while parsing Array node".to_string());
                     }
                 }
             }
@@ -207,6 +227,14 @@ impl Node {
                     bytes.push(node.to_node_type());
                     bytes.extend_from_slice(&(key.len() as u16).to_le_bytes());
                     bytes.extend_from_slice(key.as_bytes());
+                    bytes.extend_from_slice(&node.into_bytes())
+                }
+                bytes.push(node_types::END);
+                bytes.extend_from_slice(&0u16.to_le_bytes());
+            }
+            Node::Array(nodes) => {
+                for node in nodes {
+                    bytes.push(node.to_node_type() as u8);
                     bytes.extend_from_slice(&node.into_bytes())
                 }
                 bytes.push(node_types::END);
