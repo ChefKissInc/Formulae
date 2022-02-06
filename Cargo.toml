@@ -16,7 +16,6 @@ lto = "thin"
 lto = true
 
 [dependencies]
-modular-bitfield = "0.11.2"
 hashbrown = { version = "0.12.0", features = ["nightly"] }
 
 [dev-dependencies]
