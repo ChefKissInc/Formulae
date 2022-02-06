@@ -8,6 +8,7 @@
 use std::io::{BufWriter, Write};
 
 use clap::{AppSettings, ErrorKind, IntoApp, Parser, Subcommand};
+use formulae::{obj_types, Object};
 use hashbrown::HashMap;
 
 #[derive(Parser)]
@@ -32,9 +33,9 @@ enum Commands {
         #[clap(short, long, required = false)]
         path: Option<String>,
         #[clap(short = 't', long = "type", required = true, parse(try_from_str))]
-        node_type: u8,
-        #[clap(required = true)]
-        name: String,
+        obj_type: u8,
+        #[clap(short, long, required = false)]
+        name: Option<String>,
         #[clap(short, long, required = false)]
         value: Option<String>,
     },
@@ -84,23 +85,31 @@ fn split_path(mut path: &str) -> Vec<String> {
     }
 }
 
-fn traverse_path<'a>(
-    path: &'a str,
-    mut node: &'a mut formulae::Node,
-) -> Result<&'a mut formulae::Node, String> {
-    for node_path in split_path(path) {
-        node = match node {
-            formulae::Node::Root(map) | formulae::Node::Dictionary(map) => {
-                map.get_mut(&node_path).map_or_else(
-                    || Err(format!("Path to node '{}' missing", node_path)),
+fn traverse_path<'a>(path: &'a str, mut object: &'a mut Object) -> Result<&'a mut Object, String> {
+    for path in split_path(path) {
+        object = match object {
+            Object::Root(data) | Object::Dictionary(data) => {
+                data.get_mut(&path).map_or_else(
+                    || Err(format!("Path to object '{}' missing", path)),
                     |v| Ok(v),
                 )?
             }
-            _ => return Err(format!("Node of type {:#X?} cannot be indexed", node)),
+            Object::Array(items) => {
+                items
+                    .get_mut(path.parse::<usize>().map_or_else(
+                        |e| return Err(format!("Failed to parse index '{}': {:#X?}", path, e)),
+                        |v| Ok(v),
+                    )?)
+                    .map_or_else(
+                        || Err(format!("Index to object '{}' missing", path)),
+                        |v| Ok(v),
+                    )?
+            }
+            _ => return Err(format!("Object of type {:#X?} cannot be indexed", object)),
         };
     }
 
-    Ok(node)
+    Ok(object)
 }
 
 fn main() {
@@ -111,107 +120,129 @@ fn main() {
         Commands::New {} => {
             let data = HashMap::new();
             BufWriter::new(std::fs::File::create(&args.filename).unwrap())
-                .write(&formulae::Node::Root(data).into_bytes())
+                .write(&Object::Root(data).into_bytes())
                 .unwrap();
         }
         Commands::Add {
             path,
-            node_type,
+            obj_type,
             name,
             value,
         } => {
             let contents = std::fs::read(&args.filename).unwrap();
-            let mut contents = formulae::Node::parse_root(&contents).unwrap();
-            let node = if let Some(path) = path {
+            let mut contents = Object::parse_root(&contents).unwrap();
+            let object = if let Some(path) = path {
                 match traverse_path(path, &mut contents) {
-                    Ok(node) => node,
+                    Ok(v) => v,
                     Err(e) => app.error(ErrorKind::ArgumentNotFound, e).exit(),
                 }
             } else {
                 &mut contents
             };
 
-            match node {
-                formulae::Node::Root(map) | formulae::Node::Dictionary(map) => {
-                    let value = match *node_type {
-                        formulae::node_types::BOOL => {
-                            if let Some(value) = value {
-                                formulae::Node::Bool(value.parse().unwrap())
-                            } else {
-                                app.error(
-                                    ErrorKind::MissingRequiredArgument,
-                                    "Value argument missing",
-                                )
-                                .exit()
-                            }
-                        }
-                        formulae::node_types::INT32 => {
-                            if let Some(value) = value {
-                                formulae::Node::Int32(value.parse().unwrap())
-                            } else {
-                                app.error(
-                                    ErrorKind::MissingRequiredArgument,
-                                    "Value argument missing",
-                                )
-                                .exit()
-                            }
-                        }
-                        formulae::node_types::INT64 => {
-                            if let Some(value) = value {
-                                formulae::Node::Int64(value.parse().unwrap())
-                            } else {
-                                app.error(
-                                    ErrorKind::MissingRequiredArgument,
-                                    "Value argument missing",
-                                )
-                                .exit()
-                            }
-                        }
-                        formulae::node_types::STR => {
-                            if let Some(value) = value {
-                                formulae::Node::String(value.clone())
-                            } else {
-                                app.error(
-                                    ErrorKind::MissingRequiredArgument,
-                                    "Value argument missing",
-                                )
-                                .exit()
-                            }
-                        }
-                        formulae::node_types::DICT => {
-                            if let None = value {
-                                formulae::Node::Dictionary(HashMap::new())
-                            } else {
-                                app.error(
-                                    ErrorKind::ArgumentConflict,
-                                    "Inserting an object of Dict type in combination with the \
-                                     value argument is not allowed",
-                                )
-                                .exit()
-                            }
-                        }
-                        _ => {
-                            app.error(
-                                ErrorKind::InvalidValue,
-                                format!("Invalid type '{}'", node_type),
-                            )
+            let value = match *obj_type {
+                obj_types::BOOL => {
+                    if let Some(value) = value {
+                        Object::Bool(value.parse().unwrap())
+                    } else {
+                        app.error(ErrorKind::MissingRequiredArgument, "Value argument missing")
                             .exit()
-                        }
-                    };
-
-                    match map
-                        .try_insert(name.clone(), value)
-                        .map_err(|e| e.to_string())
-                    {
-                        Ok(v) => println!("Successfully inserted element: {:#X?}", v),
-                        Err(e) => app.error(ErrorKind::InvalidValue, e).exit(),
                     }
                 }
-                formulae::Node::Bool(_)
-                | formulae::Node::Int32(_)
-                | formulae::Node::Int64(_)
-                | formulae::Node::String(_) => {
-                    panic!("Can only add node to Root or Dict object")
+                obj_types::INT32 => {
+                    if let Some(value) = value {
+                        Object::Int32(value.parse().unwrap())
+                    } else {
+                        app.error(ErrorKind::MissingRequiredArgument, "Value argument missing")
+                            .exit()
+                    }
+                }
+                obj_types::INT64 => {
+                    if let Some(value) = value {
+                        Object::Int64(value.parse().unwrap())
+                    } else {
+                        app.error(ErrorKind::MissingRequiredArgument, "Value argument missing")
+                            .exit()
+                    }
+                }
+                obj_types::STR => {
+                    if let Some(value) = value {
+                        Object::String(value.clone())
+                    } else {
+                        app.error(ErrorKind::MissingRequiredArgument, "Value argument missing")
+                            .exit()
+                    }
+                }
+                obj_types::DICT => {
+                    if let None = value {
+                        Object::Dictionary(HashMap::new())
+                    } else {
+                        app.error(
+                            ErrorKind::ArgumentConflict,
+                            "Inserting an object of Dict type in combination with the value \
+                             argument is not allowed",
+                        )
+                        .exit()
+                    }
+                }
+                obj_types::ARRAY => {
+                    if let None = value {
+                        Object::Array(Vec::new())
+                    } else {
+                        app.error(
+                            ErrorKind::ArgumentConflict,
+                            "Inserting an object of Array type in combination with the value \
+                             argument is not allowed",
+                        )
+                        .exit()
+                    }
+                }
+                _ => {
+                    app.error(
+                        ErrorKind::InvalidValue,
+                        format!("Invalid type '{}'", obj_type),
+                    )
+                    .exit()
+                }
+            };
+
+            match object {
+                Object::Root(data) | Object::Dictionary(data) => {
+                    if let Some(name) = name {
+                        match data
+                            .try_insert(name.clone(), value)
+                            .map_err(|e| e.to_string())
+                        {
+                            Ok(v) => println!("Successfully inserted element: {:#X?}", v),
+                            Err(e) => app.error(ErrorKind::InvalidValue, e).exit(),
+                        }
+                    } else {
+                        app.error(ErrorKind::ArgumentNotFound, "Missing name flag")
+                            .exit()
+                    }
+                }
+                Object::Array(items) => {
+                    if let None = name {
+                        items.push(value);
+
+                        println!(
+                            "Successfully inserted element: {:#X?}",
+                            items.last().unwrap()
+                        );
+                    } else {
+                        app.error(
+                            ErrorKind::ArgumentConflict,
+                            "Cannot name object inserted to Array object",
+                        )
+                        .exit()
+                    }
+                }
+                _ => {
+                    app.error(
+                        ErrorKind::InvalidValue,
+                        "Can only add object to Root, Dict or Array object",
+                    )
+                    .exit()
                 }
             }
 
@@ -221,23 +252,27 @@ fn main() {
         }
         Commands::Set { path, value } => {
             let contents = std::fs::read(&args.filename).unwrap();
-            let mut contents = formulae::Node::parse_root(&contents).unwrap();
-            let node = match traverse_path(path, &mut contents) {
-                Ok(node) => node,
+            let mut contents = Object::parse_root(&contents).unwrap();
+            let object = match traverse_path(path, &mut contents) {
+                Ok(v) => v,
                 Err(e) => app.error(ErrorKind::ArgumentNotFound, e).exit(),
             };
 
-            println!("Before: {:#X?}", node);
-            match node {
-                formulae::Node::Root(_) | formulae::Node::Dictionary(_) => {
-                    panic!("Cannot change value of Root or Dict object")
+            match object {
+                Object::Bool(val) => *val = value.parse().unwrap(),
+                Object::Int32(val) => *val = value.parse().unwrap(),
+                Object::Int64(val) => *val = value.parse().unwrap(),
+                Object::String(val) => *val = value.clone(),
+                _ => {
+                    app.error(
+                        ErrorKind::InvalidValue,
+                        "Cannot change value of Root, Dict or Array object",
+                    )
+                    .exit()
                 }
-                formulae::Node::Bool(val) => *val = value.parse().unwrap(),
-                formulae::Node::Int32(val) => *val = value.parse().unwrap(),
-                formulae::Node::Int64(val) => *val = value.parse().unwrap(),
-                formulae::Node::String(val) => *val = value.clone(),
             }
-            println!("After: {:#X?}", node);
+
+            println!("Successfully set value to {:#X?}", object);
 
             BufWriter::new(std::fs::File::create(&args.filename).unwrap())
                 .write(&contents.into_bytes())
@@ -245,7 +280,7 @@ fn main() {
         }
         Commands::Rename { path, name } => {
             let contents = std::fs::read(&args.filename).unwrap();
-            let mut contents = formulae::Node::parse_root(&contents).unwrap();
+            let mut contents = Object::parse_root(&contents).unwrap();
             let mut parts = split_path(path);
             let old_name = parts.pop().unwrap();
             let path = parts.join(".");
@@ -258,28 +293,34 @@ fn main() {
                 }
             };
 
-            println!("Before: {:#X?}", parent);
             match parent {
-                formulae::Node::Root(map) | formulae::Node::Dictionary(map) => {
-                    let old = map.remove(&old_name.to_string()).unwrap();
-                    map.insert(name.clone(), old);
+                Object::Root(data) | Object::Dictionary(data) => {
+                    let old = data.remove(&old_name.to_string()).unwrap();
+                    data.insert(name.clone(), old);
                 }
-                _ => unreachable!(),
+                _ => {
+                    app.error(
+                        ErrorKind::InvalidValue,
+                        "Tried to rename object, parent of which is not Root or Dict object",
+                    )
+                    .exit()
+                }
             }
-            println!("After: {:#X?}", parent);
 
             BufWriter::new(std::fs::File::create(&args.filename).unwrap())
                 .write(&contents.into_bytes())
                 .unwrap();
+
+            println!("Successfully renamed object from {} to {}", old_name, name);
         }
         Commands::Read { path } => {
             let contents = std::fs::read(&args.filename).unwrap();
-            let mut contents = formulae::Node::parse_root(&contents).unwrap();
+            let mut contents = Object::parse_root(&contents).unwrap();
             if let Some(path) = path {
                 println!(
                     "{:#X?}",
                     match traverse_path(path, &mut contents) {
-                        Ok(node) => node,
+                        Ok(v) => v,
                         Err(e) => app.error(ErrorKind::ArgumentNotFound, e).exit(),
                     }
                 );
