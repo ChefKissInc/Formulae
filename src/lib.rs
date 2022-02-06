@@ -31,40 +31,62 @@ pub enum Object {
     Array(Vec<Object>),
 }
 
-fn read_bytes<const N: usize>(input: &[u8]) -> Option<([u8; N], &[u8])> {
+fn read_bytes<const N: usize>(input: &[u8]) -> Result<([u8; N], &[u8]), String> {
     if input.len() < N {
-        return None;
+        return Err(format!(
+            "Length larger than input slice ({} < {})",
+            input.len(),
+            N
+        ));
     }
 
     let (head, rest) = input.split_at(N);
 
-    Some((head.try_into().unwrap(), rest))
+    Ok((head.try_into().unwrap(), rest))
 }
 
-fn read_key(input: &[u8]) -> Option<(String, &[u8])> {
+fn read_key(input: &[u8]) -> Result<(String, &[u8]), String> {
     let (len, input) = read_bytes(input)?;
     let len = u16::from_le_bytes(len) as usize;
 
     if input.len() < len {
-        return None;
+        return Err(format!(
+            "Key length larger than input slice ({} < {})",
+            input.len(),
+            len
+        ));
     }
 
     let (head, input) = input.split_at(len);
 
-    Some((core::str::from_utf8(head).ok()?.to_string(), input))
+    Ok((
+        core::str::from_utf8(head)
+            .map_err(|e| e.to_string())?
+            .to_string(),
+        input,
+    ))
 }
 
-fn read_string(input: &[u8]) -> Option<(String, &[u8])> {
+fn read_string(input: &[u8]) -> Result<(String, &[u8]), String> {
     let (len, input) = read_bytes(input)?;
     let len = u64::from_le_bytes(len) as usize;
 
     if input.len() < len {
-        return None;
+        return Err(format!(
+            "String length larger than input slice ({} < {})",
+            input.len(),
+            len
+        ));
     }
 
     let (head, input) = input.split_at(len);
 
-    Some((core::str::from_utf8(head).ok()?.to_string(), input))
+    Ok((
+        core::str::from_utf8(head)
+            .map_err(|e| e.to_string())?
+            .to_string(),
+        input,
+    ))
 }
 
 impl Object {
@@ -80,63 +102,42 @@ impl Object {
         }
     }
 
-    pub fn parse(obj_type: u8, mut input: &[u8]) -> Result<Option<(Self, &[u8])>, String> {
+    pub fn parse(obj_type: u8, mut input: &[u8]) -> Result<(Option<Self>, &[u8]), String> {
         match obj_type {
             obj_types::BOOL => {
-                if let Some(([value], input)) = read_bytes(input) {
-                    if value > 1 {
-                        Err(format!("Invalid value for Bool object: {}", value))
-                    } else {
-                        Ok(Some((Self::Bool(value == 1), input)))
-                    }
+                let ([value], input) = read_bytes(input)?;
+                if value > 1 {
+                    Err(format!("Invalid value for Bool object: {}", value))
                 } else {
-                    Err("Data unexpectedly ended while parsing Bool object".to_string())
+                    Ok((Some(Self::Bool(value == 1)), input))
                 }
             }
             obj_types::INT32 => {
-                if let Some((bytes, input)) = read_bytes(input) {
-                    Ok(Some((Self::Int32(u32::from_le_bytes(bytes)), input)))
-                } else {
-                    Err("Data unexpectedly ended while parsing Int32 object".to_string())
-                }
+                let (bytes, input) = read_bytes(input)?;
+                Ok((Some(Self::Int32(u32::from_le_bytes(bytes))), input))
             }
             obj_types::INT64 => {
-                if let Some((bytes, input)) = read_bytes(input) {
-                    Ok(Some((Self::Int64(u64::from_le_bytes(bytes)), input)))
-                } else {
-                    Err("Data unexpectedly ended while parsing Int64 object".to_string())
-                }
+                let (bytes, input) = read_bytes(input)?;
+                Ok((Some(Self::Int64(u64::from_le_bytes(bytes))), input))
             }
             obj_types::STR => {
-                if let Some((s, input)) = read_string(input) {
-                    Ok(Some((Self::String(s), input)))
-                } else {
-                    Err("Data unexpectedly ended while parsing String object".to_string())
-                }
+                let (s, input) = read_string(input)?;
+                Ok((Some(Self::String(s)), input))
             }
             obj_types::DICT => {
                 let mut map = HashMap::new();
 
                 loop {
-                    if let Some(([obj_type], rest)) = read_bytes(input) {
-                        input = rest;
-                        if let Some((key, rest)) = read_key(input) {
-                            input = rest;
-                            if let Some((object, rest)) = Object::parse(obj_type, input)? {
-                                input = rest;
-                                map.insert(key, object);
-                            } else {
-                                break Ok(Some((Self::Dictionary(map), input)));
-                            }
-                        } else {
-                            break Err("Data unexpectedly ended while parsing Dictionary object \
-                                       contents"
-                                .to_string());
-                        }
+                    let ([obj_type], rest) = read_bytes(input)?;
+                    input = rest;
+                    let (key, rest) = read_key(input)?;
+                    input = rest;
+                    let (object, rest) = Self::parse(obj_type, input)?;
+                    input = rest;
+                    if let Some(object) = object {
+                        map.insert(key, object);
                     } else {
-                        break Err(
-                            "Data unexpectedly ended while parsing Dictionary object".to_string()
-                        );
+                        break Ok((Some(Self::Dictionary(map)), input));
                     }
                 }
             }
@@ -144,27 +145,24 @@ impl Object {
                 let mut items = Vec::new();
 
                 loop {
-                    if let Some(([obj_type], rest)) = read_bytes(input) {
-                        input = rest;
-
-                        if let Some((object, rest)) = Self::parse(obj_type, input)? {
-                            input = rest;
-                            items.push(object);
-                        } else {
-                            break Ok(Some((Self::Array(items), input)));
-                        }
+                    let ([obj_type], rest) = read_bytes(input)?;
+                    input = rest;
+                    let (object, rest) = Self::parse(obj_type, input)?;
+                    input = rest;
+                    if let Some(object) = object {
+                        items.push(object);
                     } else {
-                        break Err("Data unexpectedly ended while parsing Array object".to_string());
+                        break Ok((Some(Self::Array(items)), input));
                     }
                 }
             }
-            obj_types::END => Ok(None),
+            obj_types::END => Ok((None, input)),
             _ => Err(format!("Unknown Object type: {}", obj_type)),
         }
     }
 
     pub fn parse_root(mut input: &[u8]) -> Result<Self, String> {
-        if input.len() < 2 {
+        if input.len() < 9 {
             Err("Data too small".to_string())
         } else {
             let mut data = HashMap::new();
@@ -174,21 +172,20 @@ impl Object {
 
             if core::str::from_utf8(&magic).map_err(|e| e.to_string())? == FORMULAE_MAGIC {
                 while !input.is_empty() {
-                    if let Some(([obj_type], rest)) = read_bytes(input) {
-                        input = rest;
-                        if let Some((key, rest)) = read_key(input) {
-                            input = rest;
-                            if let Some((object, rest)) = Object::parse(obj_type, input)? {
-                                input = rest;
-                                data.try_insert(key, object).map_err(|_| {
-                                    "Tried to insert already existing value".to_string()
-                                })?;
-                            } else {
-                                return Ok(Self::Root(data));
-                            }
-                        }
+                    let ([obj_type], rest) = read_bytes(input)?;
+                    input = rest;
+                    if obj_type == obj_types::END {
+                        return Ok(Self::Root(data));
+                    }
+                    let (key, rest) = read_key(input)?;
+                    input = rest;
+                    let (object, rest) = Self::parse(obj_type, input)?;
+                    input = rest;
+                    if let Some(object) = object {
+                        data.try_insert(key, object)
+                            .map_err(|_| "Tried to insert already existing value".to_string())?;
                     } else {
-                        return Err("Data unexpectedly ended".to_string());
+                        return Ok(Self::Root(data));
                     }
                 }
 
@@ -213,7 +210,6 @@ impl Object {
                 }
 
                 bytes.push(obj_types::END);
-                bytes.extend_from_slice(&0u16.to_le_bytes());
             }
             Object::Bool(value) => bytes.extend_from_slice(&(*value as u8).to_le_bytes()),
             Object::Int32(value) => bytes.extend_from_slice(&value.to_le_bytes()),
@@ -230,7 +226,6 @@ impl Object {
                     bytes.extend_from_slice(&object.into_bytes())
                 }
                 bytes.push(obj_types::END);
-                bytes.extend_from_slice(&0u16.to_le_bytes());
             }
             Object::Array(items) => {
                 for object in items {
@@ -238,7 +233,6 @@ impl Object {
                     bytes.extend_from_slice(&object.into_bytes())
                 }
                 bytes.push(obj_types::END);
-                bytes.extend_from_slice(&0u16.to_le_bytes());
             }
         }
 
