@@ -24,8 +24,8 @@ pub const FORMULAE_MAGIC: &str = "formulae";
 pub enum Object {
     Root(HashMap<String, Object>),
     Bool(bool),
-    Int32(u32),
-    Int64(u64),
+    UInt32(u32),
+    UInt64(u64),
     String(String),
     Dictionary(HashMap<String, Object>),
     Array(Vec<Object>),
@@ -93,8 +93,8 @@ impl Object {
     pub fn to_obj_type(&self) -> u8 {
         match self {
             Self::Bool(_) => obj_types::BOOL,
-            Self::Int32(_) => obj_types::INT32,
-            Self::Int64(_) => obj_types::INT64,
+            Self::UInt32(_) => obj_types::UINT32,
+            Self::UInt64(_) => obj_types::UINT64,
             Self::String(_) => obj_types::STR,
             Self::Dictionary(_) => obj_types::DICT,
             Self::Array(_) => obj_types::ARRAY,
@@ -112,13 +112,13 @@ impl Object {
                     Ok((Some(Self::Bool(value == 1)), input))
                 }
             }
-            obj_types::INT32 => {
+            obj_types::UINT32 => {
                 let (bytes, input) = read_bytes(input)?;
-                Ok((Some(Self::Int32(u32::from_le_bytes(bytes))), input))
+                Ok((Some(Self::UInt32(u32::from_le_bytes(bytes))), input))
             }
-            obj_types::INT64 => {
+            obj_types::UINT64 => {
                 let (bytes, input) = read_bytes(input)?;
-                Ok((Some(Self::Int64(u64::from_le_bytes(bytes))), input))
+                Ok((Some(Self::UInt64(u64::from_le_bytes(bytes))), input))
             }
             obj_types::STR => {
                 let (s, input) = read_string(input)?;
@@ -212,8 +212,8 @@ impl Object {
                 bytes.push(obj_types::END);
             }
             Object::Bool(value) => bytes.extend_from_slice(&(*value as u8).to_le_bytes()),
-            Object::Int32(value) => bytes.extend_from_slice(&value.to_le_bytes()),
-            Object::Int64(value) => bytes.extend_from_slice(&value.to_le_bytes()),
+            Object::UInt32(value) => bytes.extend_from_slice(&value.to_le_bytes()),
+            Object::UInt64(value) => bytes.extend_from_slice(&value.to_le_bytes()),
             Object::String(value) => {
                 bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(value.as_bytes())

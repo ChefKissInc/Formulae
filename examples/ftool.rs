@@ -149,17 +149,17 @@ fn main() {
                             .exit()
                     }
                 }
-                obj_types::INT32 => {
+                obj_types::UINT32 => {
                     if let Some(value) = value {
-                        Object::Int32(value.parse().unwrap())
+                        Object::UInt32(value.parse().unwrap())
                     } else {
                         app.error(ErrorKind::MissingRequiredArgument, "Value argument missing")
                             .exit()
                     }
                 }
-                obj_types::INT64 => {
+                obj_types::UINT64 => {
                     if let Some(value) = value {
-                        Object::Int64(value.parse().unwrap())
+                        Object::UInt64(value.parse().unwrap())
                     } else {
                         app.error(ErrorKind::MissingRequiredArgument, "Value argument missing")
                             .exit()
@@ -260,8 +260,8 @@ fn main() {
 
             match object {
                 Object::Bool(val) => *val = value.parse().unwrap(),
-                Object::Int32(val) => *val = value.parse().unwrap(),
-                Object::Int64(val) => *val = value.parse().unwrap(),
+                Object::UInt32(val) => *val = value.parse().unwrap(),
+                Object::UInt64(val) => *val = value.parse().unwrap(),
                 Object::String(val) => *val = value.clone(),
                 _ => {
                     app.error(
